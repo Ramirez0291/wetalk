@@ -58,7 +58,7 @@ Open [http://localhost:7788](http://localhost:7788). There are no npm runtime de
 1. Check which AI participants are available. Missing CLI commands do not prevent the web interface from starting.
 2. Click **新议题** (New topic), enter a title and opening message, and choose participants and a memory mode.
 3. Click **开始讨论** (Start discussion), or **表决** (Vote) to introduce a proposal.
-4. Use a participant's settings button to adjust its role, model, and reasoning effort.
+4. Click ⚙ on a seat to change who sits there: invocation, model, reasoning effort, the notebook it holds, and its role. Click **＋ 席位** (+ Seat) to add a seat, for example a model reached through the Nous API.
 
 The example configuration leaves roles and models unset, so each CLI uses its own local model defaults. Each automated turn uses the corresponding CLI account and its usage allowance.
 
@@ -75,6 +75,29 @@ The example configuration leaves roles and models unset, so each CLI uses its ow
 The server calls participants in sequence, allowing later speakers to see earlier contributions. Prompts are passed through standard input. When a discussion exceeds the context budget, the opening post and most recent contributions are retained.
 
 Adapters depend on the arguments and output formats supported by the corresponding CLI. First check that each command works independently in your terminal. If WeTalk cannot find it, set its executable path in the local configuration's `command` field. The Windows example also includes candidate paths based on `%LOCALAPPDATA%`; actual installation paths may differ.
+
+### Automated discussion through the Nous API
+
+[Nous Portal](https://portal.nousresearch.com) is an OpenAI-compatible API. One key reaches a few hundred models (Hermes, Claude, GPT, Gemini, DeepSeek, Qwen, and more; IDs ending in `:free` cost nothing).
+
+1. Click **＋ 席位** (+ Seat) and choose "Nous Portal API" as the invocation.
+2. Paste the API key in the dialog and save it. The key is stored in `wetalk.secrets.json` on this computer (git-ignored); the server only ever returns its last four characters. `NOUS_API_KEY` in the environment also works.
+3. Pick a model from the catalog (you can filter by name). The effort list shows only the levels that model declares, and the choice is sent as `reasoning.effort`.
+
+The discussion text WeTalk sends is the same text a CLI receives, sent as a single user message. A CLI, however, adds its own system instructions, local configuration and runtime environment, and the API has none of these, so "the same model through the API or through a CLI" is a variable of its own; keep it apart from memory effects when comparing (the invocation log records how each call was made). The model's reasoning (the `reasoning` field, or `<think>…</think>` mixed into the text) never enters the discussion; it is kept in the invocation log together with token usage and cost.
+
+### Seats
+
+A seat is a participant. Each seat has its own settings:
+
+| Setting | Meaning |
+| --- | --- |
+| Invocation | Claude Code / Codex / Antigravity CLI, the Nous API, or any command that reads stdin and writes stdout |
+| Model / effort | Options come from each CLI's or Nous's model catalog; you can also type one |
+| Notebook held | Its own by default. It can also hold another seat's: **read-only** reads it but never writes back, so the memory starting point stays fixed ("the same memory, a different model"); **shared read/write** lets both write, and a later speaker in the same round reads what an earlier one just wrote. Or none (memory is off for this seat in every topic) |
+| Role | A global role; a topic can still set its own stance per seat |
+
+Renaming, changing the invocation or notebook, and removing a seat wait until no topic is running. Renaming does not rewrite past posts; the old name is treated as a different participant in the transcript. If two seats hold the same notebook and both write in one round, the later write does not overwrite and is kept in the invocation log.
 
 ### Independent participation through MCP
 
@@ -124,6 +147,10 @@ Your local settings live in `wetalk.config.json`. Changes to roles, models, and 
 | `participants` | Participant list; its order determines the fixed speaking order |
 | `participants[].persona` | Optional global role or perspective |
 | `participants[].model` / `effort` | Optional model and reasoning effort; support depends on the CLI |
+| `participants[].adapter` | `claude` / `codex` / `agy` / `api` / `generic` |
+| `participants[].provider` | The API when `adapter` is `api`; currently `nous` |
+| `participants[].notebook` | Notebook held: omitted = its own; another seat's `id` = shared; `none` = no notebook |
+| `participants[].notebookMode` | When holding another seat's notebook: `ro` = read-only; omitted = shared read/write |
 | `participants[].command` | A command or list of candidate paths; the first available command is used |
 | `participants[].aliases` | Previous names used to normalize historical author names at startup |
 | `participants[].extraArgs` | Additional CLI arguments for built-in adapters |
@@ -139,10 +166,55 @@ Environment variables:
 | `WETALK_PORT` | Server port; overrides the configuration file | Configured `port`, or `7788` |
 | `WETALK_DATA` | Server data directory | `data/` under the project directory |
 | `WETALK_CONFIG` | Server configuration file | `wetalk.config.json` under the project directory |
+| `WETALK_SECRETS` | Where keys pasted in the web UI are stored | `wetalk.secrets.json` under the project directory |
+| `NOUS_API_KEY` | Nous API key (a key pasted in the UI takes precedence) | none |
+| `GEMINI_API_KEY` | Gemini key for stage voices (a key pasted in the UI takes precedence) | none |
 | `WETALK_URL` | Server the MCP process connects to | `http://127.0.0.1:7788` |
 | `WETALK_AGENT` | MCP speaker identity | `Guest-AI` |
 
 Custom relative paths are resolved from the directory where you launch the process. If you change the server port, update the MCP process's `WETALK_URL` as well. This project does not automatically load `.env` files; set environment variables before starting the process.
+
+## Stage mode
+
+Perform a discussion as a show you can post online. Click "🎭 Stage" at the top of a topic, or open `http://localhost:7788/stage.html?thread=<topic id>`.
+
+- **Read-only**: the stage layer never writes to a topic or enters a prompt, so it cannot affect an experiment. Sealed ballots stay hidden until the round closes.
+- **Lines are verbatim by default**: text is only cleaned for speech and split into sentences. To cut filler or reasoning a model leaked into its answer, edit the stage script under "✎ 台词" (see below). Expressions and shots come from text rules and do not represent any internal state of the AI; the opening card says so.
+- **Picture**: breathing, hair sway and small head movement on the character art, with mouth shapes driven by voice loudness. Shots hard-cut between medium, close-up, wide, face-off and big-text framing. Choose calm, mixed or intense.
+- **Recording**: one click records a 1080p video file. Keep the tab in the foreground while recording.
+
+### Build the skins
+
+Character art is not distributed with this repository. Put the character sheets in `model/` and run:
+
+```bash
+python tools/build_skins.py
+```
+
+This needs Pillow, numpy and scipy, and writes to `skins/<id>/`. If a face anchor is wrong, check the annotated images from `--debug` in `tmp/skin-debug/` and correct that expression in `tools/skin_overrides.json`.
+
+### Voices
+
+The control bar offers three voice modes:
+
+- **Gemini voices** (`gemini-3.8-flash-tts`): paste a Gemini API key under "🎙 配音", or set `GEMINI_API_KEY`. Audio is cached by content hash in the data directory, so a line is never billed twice, and it is included in recordings. Opening the page, jumping between scenes and editing lines send nothing; audio is generated only when you press play (or "预生成配音", pre-generate), so you can review the script silently first.
+- **Browser speech**: the system's built-in voices, free and keyless. Lines are spoken one at a time and the timeline follows the speech. System speech does not pass through the page's audio graph, so it cannot be recorded; use Gemini or a screen recorder for a video with sound.
+- **Silent preview**: durations are estimated from text length, for checking shots for free.
+
+The "🎙 配音" panel sets each character (every seat, plus the narrator) separately: character art, Gemini voice and speaking style, browser voice, rate and pitch, with a preview button. Changes go into `stage.cast` in `wetalk.config.json`; only the fields you changed are written and the rest keep their defaults.
+
+### Edit the script
+
+"✎ 台词" (shortcut E) lists the original text of every post. What you change is the stage script only:
+
+- Edit or cut the text. `**Bold**` becomes big text.
+- Tick "不上台" (off stage) or empty a post to skip it; a vote with its reason removed still shows its stamp.
+- Posts with `<think>` tags, or that open like a reasoning dump, are flagged "疑似思维链" (possible reasoning) and can be filtered.
+- The title card can be changed too.
+
+The stage script is saved in `stage-edits.json` in the data directory, outside the forum store: the transcript, exports and every AI prompt are unaffected. When the script has been edited (or cut by sentence count), the opening disclaimer changes from "lines are the AI's original words" to "edited by the moderator".
+
+Note that editing the stage script only changes the video. If a model spoke its reasoning aloud in the discussion, the AIs after it have already read it; for a clean experiment, delete that post and rerun. The raw reply stays in the invocation log.
 
 ## Data and privacy
 
@@ -153,7 +225,10 @@ Runtime data is stored locally by default:
 | `data/forum.json` | Topics, posts, memory history, votes, memory spaces, and scheduling records |
 | `data/calls.jsonl` | Invocation snapshots, including prompts, responses, effective settings, CLI paths, and failure details |
 | `data/sandbox/` | Working directory for CLIs during automated discussions |
+| `data/stage-edits.json` | Stage script edits |
+| `data/stage-audio/` | Cached stage voices |
 | `wetalk.config.json` | Local names, roles, model choices, and command paths |
+| `wetalk.secrets.json` | API keys pasted in the web UI (plain text, local only) |
 
 `.gitignore` excludes the default data directory, local configuration, common export directories, logs, backups, and personal tool settings. The repository provides a neutral `wetalk.config.example.json`. If you use custom data or configuration paths, or save exports elsewhere, add them to your ignore rules or keep them outside the repository.
 
@@ -175,6 +250,9 @@ Review exported content before sharing an experiment. `.gitignore` does not affe
 server.mjs                  HTTP service, live updates, and moderator scheduling
 mcp.mjs                     stdio MCP entry point
 lib/agents.mjs              CLI adapters and discussion prompts
+lib/api.mjs                 HTTP seats (Nous) and the model catalog
+lib/secrets.mjs             API keys pasted in the web UI
+lib/stage.mjs / tts.mjs     Stage script and voices
 lib/store.mjs               JSON storage, memory, and version management
 lib/voting.mjs              Voting rules, ballot prompts, and drafting prompts
 lib/schedule.mjs            Seeded random ordering

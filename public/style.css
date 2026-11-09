@@ -79,7 +79,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 10px 24px;
   border-bottom: 1px solid var(--border); background: var(--panel);
 }
-.seats { flex: 1 0 280px; display: flex; flex-wrap: wrap; gap: 8px; }
+.seats-row { flex: 1 0 280px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.seats { display: flex; flex-wrap: wrap; gap: 8px; }
+.add-seat { border-style: dashed; color: var(--muted); }
 .seat {
   display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px; border-radius: 999px;
   border: 1px solid var(--border); background: var(--bg); cursor: pointer; user-select: none; font-size: 14px;
@@ -175,6 +177,7 @@ select { padding: 6px 8px; border-radius: 8px; border: 1px solid var(--border); 
   padding: 7px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); cursor: pointer;
   white-space: nowrap;
 }
+a.btn { text-decoration: none; color: inherit; }
 .btn:hover { background: var(--hover); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
@@ -203,6 +206,18 @@ dialog input:not([type=checkbox]), dialog textarea, dialog select {
 .field-row .grow { flex: 1; min-width: 0; }
 .field-row label:not(.grow) { width: 130px; flex-shrink: 0; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.dialog-actions .grow { flex: 1; }
+dialog input[type=color] { height: 38px; padding: 3px; }
+dialog label small { font-weight: normal; }
+.key-field { margin-bottom: 12px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.key-row input { flex: 1 1 200px; width: auto !important; margin-top: 0 !important; }
+.key-state { font-size: 13px; color: var(--muted); }
+.key-state.ok { color: var(--accent); }
+.key-field .hint { margin: 8px 0 0; }
+.key-field .hint a { color: inherit; }
+#personaForm select[name=model] { margin-top: 4px; }
+#personaForm input[name=modelFilter] + select { margin-top: 6px; }
 
 /* ---------- 表决 ---------- */
 :root { --yes: #2e9e5b; --no: #d0503f; --abstain: #9a9086; }

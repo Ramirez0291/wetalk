@@ -34,12 +34,16 @@
       <header class="topbar">
         <button class="icon-btn menu-btn" id="menuBtn" aria-label="打开议题列表">☰</button>
         <h1 class="thread-title" id="threadTitle">WeTalk</h1>
+        <a class="btn btn-sm" id="stageBtn" target="_blank" title="把这个议题演成一出戏：AI 娘立绘、配音和镜头" hidden>🎭 演出</a>
         <button class="btn btn-sm" id="callsBtn" title="每一次调用 AI 的完整快照：prompt、原始回复、配置、CLI 版本、失败记录" hidden>🔍 调用记录</button>
         <button class="icon-btn" id="deleteThreadBtn" title="删除这个议题" hidden>🗑</button>
       </header>
 
       <section class="stage" id="stage" hidden>
-        <div class="seats" id="seats"></div>
+        <div class="seats-row">
+          <div class="seats" id="seats"></div>
+          <button class="btn btn-sm add-seat" id="addSeatBtn" title="加一个席位：选调用方式（CLI 或 Nous API）、模型、记忆本和角色">＋ 席位</button>
+        </div>
         <div class="stage-controls">
           <select id="orderSelect" title="发言顺序：固定时按座位顺序（可拖动座位调整），随机时每轮重新洗牌">
             <option value="fixed">🔢 固定顺序</option>
@@ -99,11 +103,48 @@
     </form>
   </dialog>
 
-  <dialog id="personaDialog">
+  <dialog id="personaDialog" class="medium">
     <form method="dialog" id="personaForm">
       <h2 id="personaTitle">设置</h2>
       <div class="field-row">
+        <label class="grow">名字
+          <input name="name" required maxlength="40" placeholder="例如：Hermes">
+        </label>
+        <label>颜色
+          <input name="color" type="color" value="#8a6fd1">
+        </label>
+        <label>图标
+          <select name="icon">
+            <option value="">首字</option>
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+            <option value="gemini">Gemini</option>
+          </select>
+        </label>
+      </div>
+      <label>调用方式
+        <select name="adapter"></select>
+      </label>
+      <div id="commandField">
+        <label>命令 <small>（每行一个候选，用第一个找得到的；可以写 %LOCALAPPDATA% 和一层 * 通配）</small>
+          <textarea name="command" rows="2" spellcheck="false"></textarea>
+        </label>
+        <label id="argsField">参数 <small>（空格分隔；prompt 从 stdin 进，回复从 stdout 出）</small>
+          <input name="args" spellcheck="false">
+        </label>
+      </div>
+      <div id="keyField" class="key-field">
+        <div class="key-row">
+          <span class="key-state" id="keyState"></span>
+          <input name="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 API key">
+          <button class="btn" type="button" id="keySave">保存 key</button>
+          <button class="btn" type="button" id="keyClear" title="删掉页面里存的 key（环境变量里的不受影响）">清除</button>
+        </div>
+        <p class="hint" id="keyHint"></p>
+      </div>
+      <div class="field-row">
         <label class="grow">模型
+          <input name="modelFilter" placeholder="筛选模型，例如 hermes、claude、:free" hidden>
           <select name="model"></select>
           <input name="modelCustom" placeholder="输入模型 id" hidden>
         </label>
@@ -112,10 +153,16 @@
         </label>
       </div>
       <p class="hint" id="modelHint"></p>
+      <label>持有记忆本
+        <select name="notebook"></select>
+      </label>
+      <p class="hint" id="notebookHint"></p>
       <label>角色设定 / 立场
         <textarea name="persona" rows="4" placeholder="例如：坚定的功能主义者，认为意识就是信息处理的某种组织方式；对“感受质”之类的说法持怀疑态度。留空表示自由发挥。"></textarea>
       </label>
       <div class="dialog-actions">
+        <button class="btn btn-danger" type="button" id="seatDelete">撤掉这个席位</button>
+        <span class="grow"></span>
         <button class="btn" value="cancel" formnovalidate>取消</button>
         <button class="btn btn-primary" value="ok">保存</button>
       </div>

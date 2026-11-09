@@ -175,11 +175,15 @@ function renderSeats() {
       const personas = state.current?.personas;
       const own = personas && Object.hasOwn(personas, p.id); // 议题里明确设置过（空字符串 = 本议题不设角色）
       const role = own ? (personas[p.id] ? ui`\n本议题立场：${personas[p.id]}` : ui('\n本议题：不设角色')) : p.persona ? ui`\n角色：${p.persona}` : '';
-      const title = !p.available ? ui('本机没找到这个 AI 的命令行工具') : ui`点击切换是否参与，拖动调整发言顺序\n模型：${how}${role}`;
+      const nbName = state.notebooks?.find((n) => n.key === p.notebook)?.name ?? p.notebook;
+      const nb = p.notebook === 'none' ? ui('\n记忆本：不带') : p.notebook ? (p.notebookMode === 'ro' ? ui`\n记忆本：${nbName} 的（只读）` : ui`\n记忆本：${nbName} 的`) : '';
+      const title = !p.available
+        ? p.unavailable === 'no-key' ? ui('还没有 API key：点 ⚙ 贴一个') : ui('本机没找到这个 AI 的命令行工具')
+        : ui`点击切换是否参与，拖动调整发言顺序\n模型：${how}${role}${nb}`;
       return ui`
         <span class="seat ${cls} ${speaking}" style="--c:${p.color}" data-id="${p.id}" title="${esc(title)}">
           <span class="seat-order">${on && fixed ? ++n : ''}</span>${miniIcon(p.icon)}${esc(p.name)}
-          <button class="persona-btn ${p.persona || p.model ? 'has-persona' : ''}" data-persona="${p.id}" title="设置模型、effort 和角色">⚙</button>
+          <button class="persona-btn ${p.persona || p.model ? 'has-persona' : ''}" data-persona="${p.id}" title="设置这个席位：调用方式、模型、effort、记忆本和角色">⚙</button>
         </span>`;
     })
     .join('');
@@ -610,6 +614,8 @@ function renderAll({ keepScroll = false } = {}) {
   $('#composer').hidden = !t;
   $('#deleteThreadBtn').hidden = !t;
   $('#callsBtn').hidden = !t;
+  $('#stageBtn').hidden = !t;
+  if (t) $('#stageBtn').href = `/stage.html?thread=${t.id}`;
   renderThreads();
   renderSeats();
   renderControls();
@@ -623,6 +629,9 @@ async function loadState() {
   state.humanName = s.humanName;
   state.orderMode = s.orderMode;
   state.participants = s.participants;
+  state.adapters = s.adapters;
+  state.notebooks = s.notebooks;
+  state.secrets = s.secrets;
   state.threads = s.threads;
   state.spaces = s.spaces;
   if (!localStorageGet('wetalk.selected')) state.selected = new Set(s.participants.filter((p) => p.available).map((p) => p.id));
@@ -817,92 +826,261 @@ $('#posts').addEventListener('submit', async (e) => {
 
 $('#proposalBtn').addEventListener('click', openProposalDialog);
 
-// ---------- 参与者设置：模型 / effort / 角色 ----------
+// ---------- 席位设置：就坐人（调用方式 / 命令 / 模型 / effort / 记忆本 / 角色） ----------
 
-let settings = null; // { p, options }
+let settings = null; // { p（null = 新建）, options, key, model, effort }
 
-async function openSettings(id) {
-  const p = state.participants.find((x) => x.id === id);
-  const f = $('#personaForm');
-  settings = { p, options: null };
-  $('#personaTitle').innerHTML = ui`${miniIcon(p.icon)} ${esc(p.name)} 的设置`;
-  f.persona.value = p.persona || '';
+const SEAT_COLORS = ['#8A6FD1', '#D9A441', '#4FB3A9', '#D95F7F', '#5E8FD9', '#7FA650'];
+const adapterKey = (a) => (a.id === 'api' ? `api:${a.provider}` : a.id);
+const adapterOf = (key) => state.adapters.find((a) => adapterKey(a) === key);
+const seatAdapterKey = (p) => (p.adapter === 'api' ? `api:${p.provider || 'nous'}` : p.adapter);
+const seatForm = () => $('#personaForm');
+
+function openSettings(id) {
+  const p = id ? state.participants.find((x) => x.id === id) : null;
+  const f = seatForm();
+  settings = { p, options: null, key: null };
+  $('#personaTitle').innerHTML = p ? ui`${miniIcon(p.icon)} ${esc(p.name)} 的席位` : ui('加一个席位');
+  f.name.value = p?.name ?? '';
+  f.color.value = (p?.color ?? SEAT_COLORS[state.participants.length % SEAT_COLORS.length]).toLowerCase();
+  f.icon.value = p?.icon ?? '';
+  f.adapter.innerHTML = state.adapters.map((a) => `<option value="${esc(adapterKey(a))}">${esc(ui(a.label))}</option>`).join('');
+  f.adapter.value = p ? seatAdapterKey(p) : 'api:nous';
+  f.command.value = (p?.command ?? []).join('\n');
+  f.args.value = (p?.args ?? []).join(' ');
+  f.persona.value = p?.persona || '';
+  f.apiKey.value = '';
+  f.modelFilter.value = '';
+  fillNotebookSelect();
+  $('#seatDelete').hidden = !p;
+  $('#personaDialog').showModal();
+  (p ? f.persona : f.name).focus();
+  adapterChanged({ initial: true });
+}
+
+// 换调用方式：切换该显示的字段，重新读模型列表
+async function adapterChanged({ initial = false } = {}) {
+  const f = seatForm();
+  const { p } = settings;
+  const a = adapterOf(f.adapter.value);
+  const same = p && seatAdapterKey(p) === f.adapter.value;
+  if (!initial || !p) f.command.value = same ? (p.command ?? []).join('\n') : (a.command ?? []).join('\n');
+  // 图标是上一种调用方式自动带出来的，就跟着换；手选的不动
+  const prevIcon = adapterOf(settings.key ?? '')?.icon ?? '';
+  if (!initial && (!f.icon.value || f.icon.value === prevIcon)) f.icon.value = a.icon ?? '';
+  $('#commandField').hidden = a.kind !== 'cli';
+  $('#argsField').hidden = a.id !== 'generic';
+  $('#keyField').hidden = a.kind !== 'api';
+  renderKeyState();
+  settings.model = same ? p.model || '' : '';
+  settings.effort = same ? p.effort || '' : '';
+  settings.options = null;
+  settings.key = f.adapter.value;
   f.model.innerHTML = ui('<option>正在读取模型列表…</option>');
   f.model.disabled = true;
   f.modelCustom.hidden = true;
+  f.modelFilter.hidden = true;
   f.effort.innerHTML = '';
-  $('#effortField').hidden = p.combined;
-  $('#modelHint').textContent = p.combined
+  $('#effortField').hidden = a.id === 'agy';
+  $('#modelHint').textContent = a.id === 'agy'
     ? ui('Gemini 的模型 id 本身就包含推理强度（如 gemini-3.8-flash-high），所以没有单独的 effort。')
-    : '';
-  $('#personaDialog').showModal();
+    : a.kind === 'api' ? ui('effort 会作为 reasoning.effort 传给模型；列表里只列这个模型声明支持的强度。') : '';
+  const url = same ? `/api/participants/${p.id}/options` : `/api/adapters/${a.id}/options${a.provider ? `?provider=${a.provider}` : ''}`;
   let options;
   try {
-    options = await api('GET', `/api/participants/${id}/options`);
+    options = await api('GET', url);
   } catch (e) {
     options = { models: [], efforts: [], error: e.message };
   }
-  if (settings?.p !== p) return; // 等待期间换成了别人的设置
+  if (settings?.key !== f.adapter.value) return; // 等待期间又换了
   settings.options = options;
+  f.modelFilter.hidden = (options.models || []).length < 30;
   fillModelSelect();
 }
 
+function renderKeyState() {
+  const f = seatForm();
+  const a = adapterOf(f.adapter.value);
+  if (a?.kind !== 'api') return;
+  const s = state.secrets?.[a.secret];
+  const el = $('#keyState');
+  el.textContent = s?.set
+    ? ui`已设置 ${s.hint}（${s.source === 'page' ? ui('页面里保存的') : ui`环境变量 ${s.env.join(' / ')}`}）`
+    : ui('还没有 API key');
+  el.classList.toggle('ok', !!s?.set);
+  $('#keyClear').hidden = s?.source !== 'page';
+  $('#keyHint').innerHTML = ui`这个 key 所有 Nous 席位共用，保存后立即生效。它以明文存在本机的 wetalk.secrets.json（已被 git 忽略），不会发回浏览器。申请地址：<a href="${esc(a.keyUrl || '#')}" target="_blank" rel="noopener">${esc(a.keyUrl || '')}</a>`;
+}
+
+async function saveKey(value) {
+  const a = adapterOf(seatForm().adapter.value);
+  try {
+    state.secrets = await api('PUT', `/api/secrets/${a.secret}`, { value });
+    seatForm().apiKey.value = '';
+    renderKeyState();
+    toast(value ? ui('API key 已保存') : ui('已清除页面里保存的 key'), 'info');
+  } catch (e) {
+    toast(e.message);
+  }
+}
+$('#keySave').addEventListener('click', () => {
+  const v = seatForm().apiKey.value.trim();
+  if (!v) return toast(ui('先把 key 粘贴进输入框'));
+  saveKey(v);
+});
+$('#keyClear').addEventListener('click', () => saveKey(''));
+
+function fillNotebookSelect() {
+  const f = seatForm();
+  const { p } = settings;
+  const own = p?.id;
+  const opts = [`<option value="">${own ? ui`自己的（${esc(p.name)}）` : ui('自己的（新开一本）')}</option>`];
+  // 拿别人的记忆本有两种：只读（读它但从不写回，起点固定）和共同读写（后发言的会读到前面刚写进去的）
+  for (const nb of state.notebooks || []) {
+    if (nb.key === own) continue;
+    opts.push(ui`<option value="ro:${esc(nb.key)}">${esc(nb.name)} 的记忆本 · 只读</option>`);
+    opts.push(ui`<option value="${esc(nb.key)}">${esc(nb.name)} 的记忆本 · 共同读写</option>`);
+  }
+  opts.push(ui('<option value="none">不带记忆本（在任何议题里都按“关闭”处理）</option>'));
+  f.notebook.innerHTML = opts.join('');
+  const nb = p?.notebook ?? '';
+  const cur = nb && nb !== 'none' && p.notebookMode === 'ro' ? `ro:${nb}` : nb;
+  if (cur && cur !== 'none' && ![...f.notebook.options].some((o) => o.value === cur)) {
+    f.notebook.insertAdjacentHTML('beforeend', `<option value="${esc(cur)}">${esc(cur)}</option>`);
+  }
+  f.notebook.value = cur;
+  notebookHint();
+}
+
+function notebookHint() {
+  const f = seatForm();
+  const v = f.notebook.value;
+  const name = (state.notebooks || []).find((n) => n.key === v.replace(/^ro:/, ''))?.name ?? v.replace(/^ro:/, '');
+  $('#notebookHint').textContent = v === 'none'
+    ? ui('这个席位不读也不写记忆本，相当于永远的对照组。')
+    : v.startsWith('ro:') ? ui`这个席位读「${name}」的记忆本，但从不写回：同一份记忆起点，换一个模型来坐。`
+      : v ? ui`这个席位读「${name}」的记忆本，发言后也写回去。注意：同一轮里后发言的会读到前面刚写进去的内容；密封投票时，共用的记忆本等揭晓后才写。`
+        : '';
+}
+seatForm().notebook.addEventListener('change', notebookHint);
+
 function fillModelSelect() {
-  const { p, options } = settings;
-  const f = $('#personaForm');
-  const models = options.models || [];
-  const opts = [ui`<option value="">默认（跟随 ${esc(p.name)} 自己的设置）</option>`];
-  for (const m of models) opts.push(`<option value="${esc(m.id)}">${esc(m.label)}${m.label !== m.id ? `　${esc(m.id)}` : ''}</option>`);
-  if (p.model && !models.some((m) => m.id === p.model)) opts.push(ui`<option value="${esc(p.model)}">${esc(p.model)}（当前值，不在列表中）</option>`);
+  const { options } = settings;
+  const f = seatForm();
+  const a = adapterOf(f.adapter.value);
+  const all = options.models || [];
+  const q = f.modelFilter.value.trim().toLowerCase();
+  const cur = f.model.disabled ? settings.model : f.model.value;
+  const shown = q ? all.filter((m) => `${m.id} ${m.label}`.toLowerCase().includes(q) || m.id === cur) : all;
+  const opts = [a.kind === 'api'
+    ? ui('<option value="">（选一个模型）</option>')
+    : ui`<option value="">默认（跟随 ${esc(f.name.value || a.label)} 自己的设置）</option>`];
+  for (const m of shown.slice(0, 400)) {
+    const price = m.price?.free ? ui('免费') : m.price ? ui`$${m.price.in} / $${m.price.out} 每百万 token` : '';
+    const extra = [m.label !== m.id ? m.id : '', price].filter(Boolean).join(' · ');
+    opts.push(`<option value="${esc(m.id)}">${esc(m.label)}${extra ? `　${esc(extra)}` : ''}</option>`);
+  }
+  if (cur && cur !== '__custom' && !all.some((m) => m.id === cur)) opts.push(ui`<option value="${esc(cur)}">${esc(cur)}（当前值，不在列表中）</option>`);
   opts.push(ui('<option value="__custom">自定义…</option>'));
   f.model.innerHTML = opts.join('');
   f.model.disabled = false;
-  f.model.value = p.model || '';
+  f.model.value = cur;
+  if (f.model.value !== cur) f.model.value = '';
   if (options.error) $('#modelHint').textContent = ui`没能读取模型列表（${options.error}），可以选“自定义…”手动输入。`;
+  else if (q) $('#modelHint').textContent = ui`筛出 ${shown.length} / ${all.length} 个模型`;
   fillEffortSelect();
 }
 
-// Codex 每个模型支持的强度不同，换模型时重新生成选项，并尽量保留当前选择
+// 每个模型支持的强度不同，换模型时重新生成选项，并尽量保留当前选择
 function fillEffortSelect() {
-  const { p, options } = settings;
-  if (p.combined) return;
-  const f = $('#personaForm');
+  const { options } = settings;
+  const f = seatForm();
+  if (f.adapter.value === 'agy') return;
   const m = (options.models || []).find((x) => x.id === f.model.value);
   const efforts = m?.efforts?.length ? m.efforts : options.efforts || [];
-  const cur = f.effort.value || (f.effort.options.length ? '' : p.effort || '');
-  const opts = [ui('<option value="">默认</option>'), ...efforts.map((e) => `<option value="${esc(e)}">${esc(e)}</option>`)];
+  const cur = f.effort.options.length ? f.effort.value : settings.effort;
+  const opts = [m?.defaultEffort ? ui`<option value="">默认（${esc(m.defaultEffort)}）</option>` : ui('<option value="">默认</option>'),
+    ...efforts.map((e) => `<option value="${esc(e)}">${esc(e)}</option>`)];
   if (cur && !efforts.includes(cur)) opts.push(`<option value="${esc(cur)}">${esc(cur)}${efforts.length ? ui('（这个模型不支持）') : ''}</option>`);
   f.effort.innerHTML = opts.join('');
   f.effort.value = cur;
 }
 
-$('#personaForm').model.addEventListener('change', (e) => {
+seatForm().model.addEventListener('change', (e) => {
   const custom = e.target.value === '__custom';
-  const input = $('#personaForm').modelCustom;
+  const input = seatForm().modelCustom;
   input.hidden = !custom;
   if (custom) input.focus();
   fillEffortSelect();
 });
+seatForm().modelFilter.addEventListener('input', () => settings?.options && fillModelSelect());
+seatForm().adapter.addEventListener('change', () => adapterChanged());
 
-$('#personaForm').addEventListener('submit', async (e) => {
+seatForm().addEventListener('submit', async (e) => {
   if (e.submitter?.value !== 'ok' || !settings) return;
+  e.preventDefault(); // 保存成功才关；失败时留着对话框改
   const f = e.target;
   const { p, options } = settings;
-  const body = { persona: f.persona.value };
+  const a = adapterOf(f.adapter.value);
+  const body = {
+    name: f.name.value.trim(),
+    color: f.color.value,
+    icon: f.icon.value,
+    adapter: a.id,
+    provider: a.provider,
+    notebook: f.notebook.value.replace(/^ro:/, ''),
+    notebookMode: f.notebook.value.startsWith('ro:') ? 'ro' : 'rw',
+    persona: f.persona.value,
+  };
+  // 贴了 key 却直接点了保存席位：顺手把 key 也存了
+  if (a.kind === 'api' && f.apiKey.value.trim()) await saveKey(f.apiKey.value.trim());
+  if (a.kind === 'cli') body.command = f.command.value.split('\n').map((s) => s.trim()).filter(Boolean);
+  if (a.id === 'generic') body.args = f.args.value.trim();
   if (options) {
     body.model = f.model.value === '__custom' ? f.modelCustom.value.trim() : f.model.value;
-    if (!p.combined) body.effort = f.effort.value;
+    if (a.id !== 'agy') body.effort = f.effort.value;
   }
+  if (a.kind === 'api' && !body.model && !(p?.model && !options)) return toast(ui('API 席位要先选一个模型'));
+  if (a.kind === 'cli' && !body.command.length) return toast(ui('写一个能启动它的命令'));
   try {
-    const updated = await api('PUT', `/api/participants/${p.id}`, body);
-    Object.assign(state.participants.find((x) => x.id === updated.id), updated);
-    renderSeats();
-    const how = updated.combined ? updated.model || ui('默认') : `${updated.model || ui('默认')} · ${updated.effort || ui('默认')}`;
-    toast(ui`已更新 ${updated.name}：${how}`, 'info');
+    const saved = p ? await api('PUT', `/api/participants/${p.id}`, body) : await api('POST', '/api/participants', body);
+    if (!p) {
+      state.selected.add(saved.id);
+      localStorageSet('wetalk.selected', JSON.stringify([...state.selected]));
+    }
+    upsertParticipant(saved);
+    $('#personaDialog').close();
+    const how = saved.combined ? saved.model || ui('默认') : `${saved.model || ui('默认')} · ${saved.effort || ui('默认')}`;
+    toast(p ? ui`已更新 ${saved.name}：${how}` : ui`已加入席位 ${saved.name}：${how}`, 'info');
+    if (!saved.available) toast(saved.unavailable === 'no-key' ? ui`${saved.name} 还不能发言：没有 API key` : ui`${saved.name} 还不能发言：本机找不到这个命令`);
   } catch (err) {
     toast(err.message);
   }
 });
+
+$('#seatDelete').addEventListener('click', async () => {
+  const { p } = settings ?? {};
+  if (!p) return;
+  if (!confirm(ui`撤掉「${p.name}」这个席位？它的历史发言和记忆本都会保留，只是以后不再请它发言。`)) return;
+  try {
+    await api('DELETE', `/api/participants/${p.id}`);
+    state.participants = state.participants.filter((x) => x.id !== p.id);
+    $('#personaDialog').close();
+    renderSeats();
+    toast(ui`已撤掉 ${p.name}`, 'info');
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('#addSeatBtn').addEventListener('click', () => openSettings(null));
+
+function upsertParticipant(p) {
+  const i = state.participants.findIndex((x) => x.id === p.id);
+  if (i >= 0) state.participants[i] = p;
+  else state.participants.push(p);
+  renderSeats();
+}
 
 $('#orderSelect').addEventListener('change', async (e) => {
   try {
@@ -1306,15 +1484,17 @@ async function showCall(id) {
       ${row(ui('配置的模型'), `${esc(c.config?.model ?? ui('默认'))}${c.config?.effort ? ` · effort ${esc(c.config.effort)}` : ''}`)}
       ${row(ui('实际报告的模型'), c.reported ? `${esc(c.reported.model ?? '?')}${c.reported.effort ? ` · ${esc(c.reported.effort)}` : ''}` : '')}
       ${row(ui('角色'), `${c.config?.persona ? esc(c.config.persona) : ui('（无）')} <small>— ${personaSrc}</small>`)}
-      ${row('CLI', c.exec ? `${esc(c.exec.cliVersion ?? ui('版本未知'))}<br><small>${esc(c.exec.file ?? '')}</small>` : '')}
+      ${row(c.config?.adapter === 'api' ? 'API' : 'CLI', c.exec ? `${esc(c.exec.cliVersion ?? ui('版本未知'))}<br><small>${esc(c.exec.file ?? '')}</small>` : '')}
       ${row(ui('命令行参数'), c.exec ? `<code>${esc(JSON.stringify(c.exec.args))}</code>` : '')}
       ${row(ui('退出码'), c.exec?.code)}
-      ${row(ui('记忆'), mem.mode === 'off' ? ui('已关闭') : mem.mode ? ui`${mem.mode === 'ro' ? ui('只读') : ui('读写')} · 空间「${esc(spaceName(mem.space))}」· 读第 ${mem.read} 版${c.memoryWrote ? ui` → 写出第 ${c.memoryWrote} 版` : ''}${c.memoryConflict ? ui` · <b class="warn">写入冲突（写入时已是第 ${c.memoryConflict.current} 版，未覆盖）</b>` : ''}` : '')}
+      ${row(ui('记忆'), mem.mode === 'off' ? (mem.reason === 'seat-has-no-notebook' ? ui('已关闭（这个席位不带记忆本）') : ui('已关闭')) : mem.mode ? ui`${mem.mode === 'ro' ? ui('只读') : ui('读写')} · 空间「${esc(spaceName(mem.space))}」${mem.notebook && mem.notebook !== c.participant.id ? ui` · 持有「${esc(state.notebooks?.find((n) => n.key === mem.notebook)?.name ?? mem.notebook)}」的记忆本` : ''}· 读第 ${mem.read} 版${c.memoryWrote ? ui` → 写出第 ${c.memoryWrote} 版` : ''}${c.memoryConflict ? ui` · <b class="warn">写入冲突（写入时已是第 ${c.memoryConflict.current} 版，未覆盖）</b>` : ''}` : '')}
+      ${row(ui('用量'), c.usage ? esc([c.usage.prompt_tokens != null ? `in ${c.usage.prompt_tokens}` : '', c.usage.completion_tokens != null ? `out ${c.usage.completion_tokens}` : '', c.usage.completion_tokens_details?.reasoning_tokens ? `reasoning ${c.usage.completion_tokens_details.reasoning_tokens}` : '', c.usage.cost != null ? `$${c.usage.cost}` : ''].filter(Boolean).join(' · ')) : '')}
       ${row(ui('调度'), c.runId ? ui`调度 #${c.runId}` : '')}
     </table>
     ${c.sealed ? ui('<p class="hint">🔒 密封投票还没揭晓，原始回复暂不公开。</p>') : ''}
     ${pre(ui('被拦下的记忆本内容'), c.memoryAttempt, true)}
     ${pre(ui('原始回复'), c.raw, true)}
+    ${pre(ui('思考过程（没有进入讨论）'), c.reasoning)}
     ${pre(ui('实际送入的 prompt'), c.prompt)}
     ${pre(ui('stderr（末尾）'), c.stderrTail, isFailure(c))}
     ${pre(ui('stdout（末尾）'), c.stdoutTail)}`;
@@ -1440,6 +1620,15 @@ function connect() {
       case 'participant':
         Object.assign(state.participants.find((x) => x.id === ev.participant.id) || {}, ev.participant);
         renderSeats();
+        break;
+      case 'participants':
+        state.participants = ev.participants;
+        state.notebooks = ev.notebooks;
+        if (!drag?.started) renderSeats();
+        break;
+      case 'secrets':
+        state.secrets = ev.secrets;
+        if ($('#personaDialog').open) renderKeyState();
         break;
     }
   };

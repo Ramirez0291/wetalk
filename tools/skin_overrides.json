@@ -1,0 +1,58 @@
+{
+ "claude": {
+  "smile": {
+   "mouth": [
+    579.9,
+    542.4
+   ],
+   "mouthSize": [
+    38,
+    9
+   ]
+  },
+  "shy": {
+   "mouth": [
+    565.6,
+    580.9
+   ],
+   "mouthSize": [
+    36,
+    9
+   ]
+  },
+  "pout": {
+   "mouth": [
+    586.9,
+    566.7
+   ],
+   "mouthSize": [
+    38,
+    9
+   ]
+  }
+ },
+ "gemini": {
+  "laugh": {
+   "mouth": [
+    585.5,
+    651.2
+   ],
+   "mouthSize": [
+    42,
+    10
+   ]
+  }
+ },
+ "deepseek": {
+  "shy": {
+   "mouth": [
+    594.1,
+    766.9
+   ],
+   "mouthSize": [
+    46,
+    11
+   ]
+  }
+ }
+}

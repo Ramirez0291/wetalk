@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WeTalk 演出</title>
+  <link rel="stylesheet" href="/stage/stage.css">
+</head>
+<body>
+  <main class="theater">
+    <div class="screen" id="screen">
+      <canvas id="stage" aria-label="演出画面"></canvas>
+      <button class="big-play" id="bigPlay">▶ 开演</button>
+      <div class="notice" id="notice" hidden></div>
+    </div>
+    <div class="bar">
+      <button id="playBtn" class="primary" title="空格">▶ 播放</button>
+      <button id="restartBtn" title="从头开始">⏮</button>
+      <select id="threadSel" title="议题" aria-label="议题"></select>
+      <select id="sceneSel" title="跳到某一条发言（✎ 是改过台词的）" aria-label="发言"></select>
+      <select id="modeSel" title="镜头强度" aria-label="镜头强度">
+        <option value="mixed">🎬 混合</option>
+        <option value="calm">🍵 温和</option>
+        <option value="hype">🔥 激烈</option>
+      </select>
+      <select id="linesSel" title="每条发言最多演几句，按句截断，不改写原文" aria-label="每条发言的句数">
+        <option value="0">全文</option>
+        <option value="3">每条 3 句</option>
+        <option value="5">每条 5 句</option>
+        <option value="8">每条 8 句</option>
+      </select>
+      <select id="voiceSel" title="配音方式：Gemini 要 API key，按量计费；浏览器朗读免费，但录不进视频；静音按字数估时长，用来免费看分镜" aria-label="配音方式">
+        <option value="gemini">🎙 Gemini 配音</option>
+        <option value="browser">🗣 浏览器朗读</option>
+        <option value="off">🔇 静音预览</option>
+      </select>
+      <button id="editBtn" title="改演出用的台词：删废话、删说漏嘴的思考过程、整段不上台。不改讨论记录（E）">✎ 台词</button>
+      <button id="castBtn" title="配音设置：Gemini API key，每个角色的立绘、音色、浏览器声音和语速">🎙 配音</button>
+      <button id="pregenBtn" title="提前生成全部配音，之后播放不用等">⬇ 预生成配音</button>
+      <button id="recordBtn" title="从当前位置录到结尾，保存成视频文件">⏺ 录制</button>
+      <button id="fullBtn" title="全屏（F）">⛶</button>
+      <a href="/" class="back">← 回研讨室</a>
+    </div>
+    <div class="status" id="status" role="status"></div>
+  </main>
+
+  <dialog id="editDialog" class="panel">
+    <div class="panel-head">
+      <h2>✎ 演出台词</h2>
+      <select id="editFilter" aria-label="筛选">
+        <option value="all">全部发言</option>
+        <option value="ai">只看 AI</option>
+        <option value="thinking">疑似思维链</option>
+        <option value="edited">改过的</option>
+      </select>
+      <span class="grow"></span>
+      <button type="button" id="editClose" class="primary">完成</button>
+    </div>
+    <p class="hint">这里改的只是演出用的稿子，讨论记录、导出和 AI 读到的内容都不变。原文里的 **加粗** 会变成大字。把整段删空或勾「不上台」就不演这条。停手 0.6 秒自动保存。</p>
+    <label class="title-edit">片头标题 <input id="editTitle" maxlength="200"></label>
+    <ol class="edit-list" id="editList"></ol>
+  </dialog>
+
+  <dialog id="castDialog" class="panel">
+    <div class="panel-head">
+      <h2>🎙 配音设置</h2>
+      <label>配音方式
+        <select id="castEngine">
+          <option value="gemini">Gemini 配音</option>
+          <option value="browser">浏览器朗读</option>
+          <option value="off">静音预览</option>
+        </select>
+      </label>
+      <span class="grow"></span>
+      <button type="button" id="castClose" class="primary">完成</button>
+    </div>
+    <div class="key-row">
+      <b>Gemini API key</b>
+      <span id="keyState" class="key-state"></span>
+      <input id="keyInput" type="password" autocomplete="off" spellcheck="false" placeholder="粘贴 key（在 aistudio.google.com 申请）">
+      <button type="button" id="keySave">保存</button>
+      <button type="button" id="keyClear" title="删掉页面里存的 key（环境变量里的不受影响）">清除</button>
+    </div>
+    <p class="hint">key 以明文存在本机的 wetalk.secrets.json（已被 git 忽略），保存后立即生效，服务端不会把它发回页面。<span id="castEngineHint"></span></p>
+    <div class="cast-wrap">
+      <table class="cast-table">
+        <thead><tr><th>角色</th><th>立绘</th><th>Gemini 音色 · 风格</th><th>浏览器声音 · 语速 · 音调</th><th></th></tr></thead>
+        <tbody id="castRows"></tbody>
+      </table>
+    </div>
+  </dialog>
+  <script type="module" src="/stage/stage.js"></script>
+</body>
+</html>

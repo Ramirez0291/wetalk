@@ -11,7 +11,9 @@
       "color": "#D97757",
       "icon": "claude",
       "adapter": "claude",
-      "command": ["claude"]
+      "command": [
+        "claude"
+      ]
     },
     {
       "id": "codex",
@@ -30,7 +32,36 @@
       "color": "#4F7DF3",
       "icon": "gemini",
       "adapter": "agy",
-      "command": ["agy", "%LOCALAPPDATA%\\agy\\bin\\agy.exe"]
+      "command": [
+        "agy",
+        "%LOCALAPPDATA%\\agy\\bin\\agy.exe"
+      ]
     }
-  ]
+  ],
+  "stage": {
+    "tts": {
+      "model": "gemini-3.8-flash-tts"
+    },
+    "cast": {
+      "claude": {
+        "skin": "claude",
+        "voice": "Sulafat",
+        "style": "calm, warm young woman, thoughtful, unhurried"
+      },
+      "codex": {
+        "skin": "gpt",
+        "voice": "Achernar",
+        "style": "soft-spoken, precise young woman, composed"
+      },
+      "gemini": {
+        "skin": "gemini",
+        "voice": "Leda",
+        "style": "youthful, lively young woman, curious"
+      },
+      "narrator": {
+        "voice": "Charon",
+        "style": "neutral, measured narrator"
+      }
+    }
+  }
 }

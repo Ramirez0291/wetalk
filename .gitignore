@@ -42,7 +42,14 @@ calls.jsonl.*
 CLAUDE.local.md
 AGENTS.local.md
 
-# Credentials and private keys.
+# Character art: source licences are unknown, so neither the originals nor the
+# skins cut from them go into the repository. See tools/build_skins.py.
+/model/
+/skins/
+
+# Credentials and private keys (API keys pasted in the web UI land in wetalk.secrets.json).
+/wetalk.secrets.json
+/wetalk.secrets.json.tmp
 .aws/
 .ssh/
 credentials.json
