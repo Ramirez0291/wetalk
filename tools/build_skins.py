@@ -8,6 +8,9 @@
     python tools/build_skins.py claude gemini   # 只处理指定皮肤
     python tools/build_skins.py --debug claude  # 另存锚点标注图到 tmp/skin-debug/
 
+抠图：默认从图边泛洪吃白底。想要更干净的边缘，先跑 tools/recut_skins.py 让 GPT 重抠，
+结果在 model/_gpt_cutouts/<皮肤>/<部件>.png，这里发现有就优先用（--no-gpt 可以关掉）。
+
 依赖：Pillow、numpy、scipy。自动检测不准时，在 tools/skin_overrides.json 里按
 "皮肤 id → 表情 → {faceBox, mouth, mouthSize}" 手工覆盖，坐标是该表情图的像素坐标。
 """
@@ -25,6 +28,8 @@ ROOT = Path(__file__).resolve().parent.parent
 MODEL = ROOT / 'model'
 OUT = ROOT / 'skins'
 OVERRIDES = Path(__file__).with_name('skin_overrides.json')
+CUTOUTS = MODEL / '_gpt_cutouts'
+USE_GPT = True
 
 # 皮肤 id → (model 下的目录, 显示名, 主题色)
 SOURCES = {
@@ -148,6 +153,54 @@ def matte(rgb, bg_min=250, crop_bottom=False):
     a = alpha[..., None].astype(np.float32)
     color = np.where(a > 0.02, (rgb.astype(np.float32) - (1 - a) * 255) / np.maximum(a, 0.02), 0)
     return np.dstack([np.clip(color, 0, 255), alpha * 255]).astype(np.uint8)
+
+
+def gpt_cutout(skin_id, part, rgb):
+    """GPT 重抠的透明底图。返回 (rgba, 贴回白底的 rgb)；后者给面部检测用，因为重画后的位置会有一两个像素的出入。"""
+    path = CUTOUTS / skin_id / f'{part}.png'
+    if not USE_GPT or not path.exists():
+        return None
+    im = Image.open(path).convert('RGBA')
+    h, w = rgb.shape[:2]
+    if im.size != (w, h):
+        im = im.resize((w, h), Image.LANCZOS)
+    rgba = np.array(im)
+    a = rgba[..., 3].astype(np.float32) / 255
+    # 清掉几乎看不见的残留，免得 bbox 被一两个脏点撑大
+    a[a < 0.04] = 0
+    rgba[..., 3] = (a * 255).astype(np.uint8)
+    rgba[a == 0, :3] = 0
+    flat = rgba[..., :3].astype(np.float32) * a[..., None] + 255 * (1 - a[..., None])
+    return rgba, flat.astype(np.uint8)
+
+
+def cut(skin_id, part, rgb, **kw):
+    hit = gpt_cutout(skin_id, part, rgb)
+    return hit if hit else (matte(rgb, **kw), rgb)
+
+
+def mouth_sprite(rgb, center, size):
+    """只留嘴本身的贴片：按"和周围肤色差多少"把嘴抠出来，四周不带皮肤，贴到别的表情上不会有色块。"""
+    cx, cy = int(round(center[0])), int(round(center[1]))
+    half_w = int(size[0] * 0.5 * 1.7) + 6
+    half_h = int(size[1] * 0.5 * 1.7) + 6
+    x0, x1 = max(cx - half_w, 0), min(cx + half_w, rgb.shape[1])
+    y0, y1 = max(cy - half_h, 0), min(cy + half_h, rgb.shape[0])
+    crop = rgb[y0:y1, x0:x1].astype(np.float32)
+    h, w = crop.shape[:2]
+    border = np.concatenate([crop[0], crop[-1], crop[:, 0], crop[:, -1]])
+    skin = np.median(border, axis=0)
+    dist = np.abs(crop - skin).max(axis=2)
+    mask = ndi.binary_closing(dist > 26, iterations=2)
+    labels, n = ndi.label(mask)
+    if n:
+        # 只要压在嘴中央那一块上的连通域（鼻影、下巴线不要）
+        core = labels[max(h // 2 - size[1] // 3, 0):h // 2 + size[1] // 3 + 1, max(w // 2 - size[0] // 3, 0):w // 2 + size[0] // 3 + 1]
+        keep = np.unique(core[core > 0])
+        mask = np.isin(labels, keep)
+    mask = ndi.binary_fill_holes(mask)
+    alpha = np.clip(ndi.gaussian_filter(mask.astype(np.float32), 0.9) * 1.25, 0, 1)
+    return np.dstack([crop, alpha * 255]).astype(np.uint8), bool(mask.sum() > size[0] * size[1] * 0.25)
 
 
 def save_webp(rgba, path, quality=90):
@@ -340,12 +393,13 @@ def build_skin(skin_id, overrides, debug=False):
     out.mkdir(parents=True, exist_ok=True)
 
     full_id, side_id = views[0]['id'], views[1]['id']
-    full = matte(cropped[full_id])
+    full, full_rgb = cut(skin_id, 'full', cropped[full_id])
     save_webp(full, out / 'full.webp')
     side = matte(cropped[side_id])
     save_webp(side, out / 'side.webp')
 
-    full_face = detect_face(cropped[full_id])
+    # 全身图里脸只在最上面一截；整张去找会被裙子上的肤色块带偏
+    full_face = detect_face(full_rgb[:int(full_rgb.shape[0] * 0.35)])
     skin = dict(
         id=skin_id, name=name, color=color,
         full=dict(src='full.webp', size=[full.shape[1], full.shape[0]], face=full_face, bbox=bbox(full)),
@@ -354,14 +408,15 @@ def build_skin(skin_id, overrides, debug=False):
     )
 
     rgba = {}
+    rgbs = {}
     found = {}
     manual = overrides.get(skin_id, {})
     for asset in faces:
         expr = EXPRESSIONS.get(asset['id'].split('_')[-1])
         if not expr:
             continue
-        rgb = cropped[asset['id']]
-        rgba[expr] = matte(rgb, crop_bottom=True)
+        rgba[expr], rgb = cut(skin_id, expr, cropped[asset['id']], crop_bottom=True)
+        rgbs[expr] = rgb
         save_webp(rgba[expr], out / f'{expr}.webp')
         face = detect_face(rgb)
         if face:
@@ -379,9 +434,14 @@ def build_skin(skin_id, overrides, debug=False):
         # 要盖得住其它表情里更宽的闭嘴线（微笑的嘴角比张嘴宽得多）
         half_w = max(int(donor['mouthSize'][0] * 1.2), int(W * 0.21))
         half_h = max(int(donor['mouthSize'][1] * 1.1), int(W * 0.14))
-        patch, center = cut_patch(rgba['surprised'], donor['mouth'], half_w, half_h, 0.35)
+        patch, ok = mouth_sprite(rgbs['surprised'], donor['mouth'], donor['mouthSize'])
+        if ok:
+            skin['mouth'] = dict(src='mouth.webp', size=[patch.shape[1], patch.shape[0]], faceW=W, keyed=True)
+        else:
+            # 抠不出嘴形（颜色太接近肤色）就退回带一圈皮肤的羽化贴片
+            patch, center = cut_patch(rgba['surprised'], donor['mouth'], half_w, half_h, 0.35)
+            skin['mouth'] = dict(src='mouth.webp', size=[patch.shape[1], patch.shape[0]], faceW=W)
         save_webp(patch, out / 'mouth.webp', 95)
-        skin['mouth'] = dict(src='mouth.webp', size=[patch.shape[1], patch.shape[0]], faceW=W)
     # 眨眼不用贴片（每张头部角度不同，贴上去会错位），舞台把眼带压扁来做。
     # 这里只需要眼线高度：取"闭眼轻笑"里眼线到嘴的距离，按脸宽换算到每张表情
     laugh = found.get('laugh')
@@ -437,7 +497,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument('skins', nargs='*', help='皮肤 id，留空处理全部')
     ap.add_argument('--debug', action='store_true')
+    ap.add_argument('--no-gpt', action='store_true', help='不用 model/_gpt_cutouts 里 GPT 重抠的图')
     args = ap.parse_args()
+    global USE_GPT
+    USE_GPT = not args.no_gpt
     overrides = json.loads(OVERRIDES.read_text(encoding='utf-8')) if OVERRIDES.exists() else {}
     bad = [s for s in args.skins if s not in SOURCES]
     if bad:

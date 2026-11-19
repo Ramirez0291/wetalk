@@ -74,17 +74,34 @@ export function envelopeFromSamples(samples, sampleRate) {
 // 静音预览：没有音频时按文字估时长，造一条音节起伏的包络
 export const estimateDuration = (text) => Math.max(1.2, [...text].length / 4.6);
 
+const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+// 一个字一个音节：每个字张一次嘴，轻重各不相同，标点处闭嘴。比匀速的正弦像说话得多
 export function fakeEnvelope(text, duration) {
   const chars = [...text];
   const n = Math.floor(duration * FPS);
   const env = new Float32Array(n);
+  let last = 0;
   for (let i = 0; i < n; i++) {
-    const t = i / FPS;
-    const ch = chars[Math.min(chars.length - 1, Math.floor((t / duration) * chars.length))];
-    const pause = /[。！？；，、：,.!?;:]/.test(ch);
-    env[i] = pause ? 0 : 0.35 + 0.65 * Math.abs(Math.sin(t * 15));
+    const pos = ((i / FPS) / duration) * chars.length;
+    const index = Math.min(chars.length - 1, Math.floor(pos));
+    const ch = chars[index];
+    const pause = /[\s。！？；，、：,.!?;:…—「」『』（）()]/.test(ch);
+    const amp = 0.4 + 0.6 * hash(index * 7.3 + ch.codePointAt(0));
+    const v = pause ? 0 : amp * Math.sin(Math.PI * Math.min((pos - index) / 0.9, 1)) ** 0.7;
+    last = v > last ? last * 0.4 + v * 0.6 : last * 0.7 + v * 0.3; // 张得快，合得慢
+    env[i] = last;
   }
   return env;
+}
+
+// 浏览器朗读拿不到响度也拿不到文字位置：按语速造音节，偶尔停一下换气
+export function syllableLevel(time, rate = 4.6) {
+  const x = time * rate;
+  const index = Math.floor(x);
+  if (hash(index * 3.7) < 0.1) return 0;
+  const amp = 0.4 + 0.6 * hash(index + 31.7);
+  return amp * Math.sin(Math.PI * Math.min((x - index) / 0.88, 1)) ** 0.7;
 }
 
 export const levelAt = (envelope, t) => {

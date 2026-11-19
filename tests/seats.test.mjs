@@ -104,3 +104,30 @@ test('secrets: the page-saved key wins over env, and the view never contains the
   assert.throws(() => s.set('nope', 'abcdefghij'), /没有这种密钥/);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a DeepSeek seat sends reasoning_effort at the top level and reads reasoning_content', async () => {
+  let seen;
+  const fetchImpl = async (url, init) => {
+    seen = { url, headers: init.headers, body: JSON.parse(init.body) };
+    return ok({ model: 'deepseek-v4-pro', choices: [{ message: { content: '正式发言', reasoning_content: '想了一下' }, finish_reason: 'stop' }] });
+  };
+  const p = { id: 'ds', name: 'DeepSeek', adapter: 'api', provider: 'deepseek', model: 'deepseek-v4-pro', effort: 'max' };
+  const r = await runAgent(p, '你好', { timeoutMs: 5000, getKey: (n) => (n === 'deepseek' ? 'sk-deepseek-9999' : null), fetchImpl });
+  assert.equal(seen.url, 'https://api.deepseek.com/chat/completions');
+  assert.equal(seen.headers.Authorization, 'Bearer sk-deepseek-9999');
+  assert.equal(seen.body.reasoning_effort, 'max');
+  assert.equal(seen.body.reasoning, undefined);
+  assert.equal(r.raw, '正式发言');
+  assert.equal(r.reasoning, '想了一下');
+  await assert.rejects(runAgent(p, 'x', { timeoutMs: 5000, getKey: (n) => (n === 'nous' ? 'k' : null), fetchImpl }), /DeepSeek 的 API key/);
+});
+
+test('the DeepSeek catalog maps effort levels, and is not requested without a key', async () => {
+  const [m] = mapCatalog([{ id: 'deepseek-flash', object: 'model', owned_by: 'deepseek', name: 'DeepSeek-V4.1-Flash', context_window: 1048576, effort: { supported_levels: ['low', 'high', 'max'], default_level: 'high' } }]);
+  assert.deepEqual(m.efforts, ['none', 'low', 'high', 'max']);
+  assert.equal(m.defaultEffort, 'high');
+  assert.equal(m.label, 'DeepSeek-V4.1-Flash');
+  assert.equal(m.context, 1048576);
+  await assert.rejects(listOptions({ adapter: 'api', provider: 'deepseek' }, { getKey: () => null }), /先保存 DeepSeek/);
+  assert.equal(createSecrets(path.join(os.tmpdir(), 'wetalk-none.json'), { DEEPSEEK_API_KEY: 'env-deepseek-1' }).get('deepseek'), 'env-deepseek-1');
+});

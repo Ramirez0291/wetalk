@@ -210,6 +210,8 @@ dialog input:not([type=checkbox]), dialog textarea, dialog select {
 dialog input[type=color] { height: 38px; padding: 3px; }
 dialog label small { font-weight: normal; }
 .key-field { margin-bottom: 12px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px; }
+.persona-lib { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+.persona-lib select { flex: 1 1 auto; min-width: 0; }
 .key-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .key-row input { flex: 1 1 200px; width: auto !important; margin-top: 0 !important; }
 .key-state { font-size: 13px; color: var(--muted); }

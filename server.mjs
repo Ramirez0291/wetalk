@@ -909,7 +909,39 @@ function applySeat(p, saved, body, { creating = false } = {}) {
   p.resolved = resolveSeat(p);
 }
 
+// ---------- 人格库 ----------
+// 存下来的角色设定，写在 config.personas 里；席位和议题用的时候是把文字抄过去，改库不会动已经在用的。
+const personaLibrary = () => (Array.isArray(config.personas) ? config.personas : []).filter((x) => x && x.id && x.name && typeof x.text === 'string');
+
+function savePersona(body) {
+  const name = str(body.name, 'name', 40);
+  const text = str(body.text, 'text', 2000);
+  const list = personaLibrary();
+  const hit = list.find((x) => x.name.toLowerCase() === name.toLowerCase());
+  if (!hit && list.length >= 100) throw new HttpError(400, '人格库最多存 100 条');
+  const entry = hit ? Object.assign(hit, { name, text }) : { id: `ps-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, name, text };
+  if (!hit) list.push(entry);
+  config.personas = list;
+  saveConfig();
+  broadcast({ type: 'personas', personas: list });
+  return { entry, personas: list, replaced: !!hit };
+}
+
 const routes = [
+  ['GET', /^\/api\/personas$/, () => personaLibrary()],
+
+  // 同名的覆盖
+  ['POST', /^\/api\/personas$/, async (req) => savePersona(await readJson(req))],
+
+  ['DELETE', /^\/api\/personas\/([\w-]+)$/, (req, m) => {
+    const list = personaLibrary();
+    if (!list.some((x) => x.id === m[1])) throw new HttpError(404, '人格库里没有这一条');
+    config.personas = list.filter((x) => x.id !== m[1]);
+    saveConfig();
+    broadcast({ type: 'personas', personas: config.personas });
+    return { personas: config.personas };
+  }],
+
   ['GET', /^\/api\/state$/, () => ({
     humanName: config.humanName,
     orderMode: config.order === 'random' ? 'random' : 'fixed',
@@ -918,6 +950,7 @@ const routes = [
     icons: ICONS,
     notebooks: notebookList(),
     secrets: secrets.view(),
+    personas: personaLibrary(),
     threads: store.listThreads(),
     spaces: store.listSpaces().map(spaceView),
   })],
@@ -1435,7 +1468,8 @@ const routes = [
     const body = await readJson(req);
     const name = str(body.name, 'name', 40);
     if (participants.length >= 12) throw new HttpError(400, '最多 12 个席位');
-    const def = ADAPTERS.find((a) => a.id === (body.adapter || 'api')) ?? ADAPTERS[0];
+    const want = body.adapter || 'api';
+    const def = ADAPTERS.find((a) => a.id === want && (a.id !== 'api' || a.provider === (body.provider || 'nous'))) ?? ADAPTERS[0];
     const id = seatId(name);
     const saved = { id, name, color: COLOR_RE.test(body.color ?? '') ? body.color : '#8A6FD1' };
     const p = { ...saved };

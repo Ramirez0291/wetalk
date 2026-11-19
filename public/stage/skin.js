@@ -25,6 +25,11 @@ function rigFor(size, face, bbox, skin, seed) {
   if (face?.mouth && skin?.mouth && box) {
     const scale = (box[2] - box[0]) / skin.mouth.faceW;
     rig.mouthRect = [face.mouth[0] / W, face.mouth[1] / H, (skin.mouth.size[0] / 2) * scale / W, (skin.mouth.size[1] / 2) * scale / H];
+    // 这张表情原本那张嘴有多大：张嘴时先用肤色盖掉它（只有抠干净的贴片才需要，旧贴片自带一圈皮肤）
+    if (skin.mouth.keyed && face.mouthSize) {
+      const faceW = box[2] - box[0];
+      rig.mouthLine = [(face.mouthSize[0] * 0.8 + faceW * 0.045) / W, (face.mouthSize[1] * 0.9 + faceW * 0.035) / H];
+    }
   }
   if (face?.eyeY && box) {
     const faceW = box[2] - box[0];

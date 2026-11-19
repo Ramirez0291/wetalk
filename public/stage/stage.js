@@ -2,7 +2,7 @@
 import { Warp } from './warp.js';
 import { loadSkin } from './skin.js';
 import { Renderer } from './renderer.js';
-import { envelopeFromSamples, estimateDuration, fakeEnvelope, layoutLines, levelAt, shotForMode } from './timing.js';
+import { envelopeFromSamples, estimateDuration, fakeEnvelope, layoutLines, levelAt, shotForMode, syllableLevel } from './timing.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('stage');
@@ -228,7 +228,7 @@ function currentFrame(sceneTime) {
   const time = performance.now() / 1000;
   const silent = scene.type === 'title' || scene.type === 'card' || scene.type === 'host';
   // 浏览器朗读拿不到响度，正在念的时候让嘴按音节开合
-  const level = silent ? 0 : live ? (state.playing && speech.started && speech.active ? 0.35 + 0.65 * Math.abs(Math.sin(time * 15)) : 0) : levelAt(envelope, t);
+  const level = silent ? 0 : live ? (state.playing && speech.started && speech.active ? syllableLevel(time) : 0) : levelAt(envelope, t);
   return {
     scene, line, lineIndex, shot, time, level,
     lineAge: t - lineStart,

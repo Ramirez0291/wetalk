@@ -86,6 +86,14 @@ Adapters depend on the arguments and output formats supported by the correspondi
 
 The discussion text WeTalk sends is the same text a CLI receives, sent as a single user message. A CLI, however, adds its own system instructions, local configuration and runtime environment, and the API has none of these, so "the same model through the API or through a CLI" is a variable of its own; keep it apart from memory effects when comparing (the invocation log records how each call was made). The model's reasoning (the `reasoning` field, or `<think>…</think>` mixed into the text) never enters the discussion; it is kept in the invocation log together with token usage and cost.
 
+### Automated discussion through the DeepSeek API
+
+Choose "DeepSeek API" as the invocation and paste a key from the [DeepSeek platform](https://platform.deepseek.com/api_keys) (or set `DEEPSEEK_API_KEY`). DeepSeek only lists models to authenticated callers, so save the key before picking a model. The effort is sent as the top-level `reasoning_effort`; `none` turns thinking off. Reasoning text (`reasoning_content`) stays in the invocation log, as with Nous.
+
+### Persona library
+
+A role written in a seat's settings can be saved under a name with "Save to library" and picked again from the dropdown in any seat's settings; the custom-stance field in the vote dialog suggests library entries too. The library lives in `personas` in `wetalk.config.json`. Picking an entry copies its text into the seat, so later edits or deletions in the library never change a seat that already uses it.
+
 ### Seats
 
 A seat is a participant. Each seat has its own settings:
@@ -148,7 +156,8 @@ Your local settings live in `wetalk.config.json`. Changes to roles, models, and 
 | `participants[].persona` | Optional global role or perspective |
 | `participants[].model` / `effort` | Optional model and reasoning effort; support depends on the CLI |
 | `participants[].adapter` | `claude` / `codex` / `agy` / `api` / `generic` |
-| `participants[].provider` | The API when `adapter` is `api`; currently `nous` |
+| `participants[].provider` | The API when `adapter` is `api`: `nous` or `deepseek` |
+| `personas[]` | Persona library: `{ id, name, text }`, saved and picked in the seat settings |
 | `participants[].notebook` | Notebook held: omitted = its own; another seat's `id` = shared; `none` = no notebook |
 | `participants[].notebookMode` | When holding another seat's notebook: `ro` = read-only; omitted = shared read/write |
 | `participants[].command` | A command or list of candidate paths; the first available command is used |
@@ -168,6 +177,7 @@ Environment variables:
 | `WETALK_CONFIG` | Server configuration file | `wetalk.config.json` under the project directory |
 | `WETALK_SECRETS` | Where keys pasted in the web UI are stored | `wetalk.secrets.json` under the project directory |
 | `NOUS_API_KEY` | Nous API key (a key pasted in the UI takes precedence) | none |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (a key pasted in the UI takes precedence) | none |
 | `GEMINI_API_KEY` | Gemini key for stage voices (a key pasted in the UI takes precedence) | none |
 | `WETALK_URL` | Server the MCP process connects to | `http://127.0.0.1:7788` |
 | `WETALK_AGENT` | MCP speaker identity | `Guest-AI` |
@@ -192,6 +202,19 @@ python tools/build_skins.py
 ```
 
 This needs Pillow, numpy and scipy, and writes to `skins/<id>/`. If a face anchor is wrong, check the annotated images from `--debug` in `tmp/skin-debug/` and correct that expression in `tools/skin_overrides.json`.
+
+The built-in matting flood-fills the white background from the image border, which leaves a pale fringe on characters with white hair or clothes. For cleaner edges, have GPT recut the art first (needs a logged-in Codex CLI; about a minute per image, billed to your ChatGPT plan):
+
+```bash
+python tools/recut_skins.py claude gpt gemini   # writes model/_gpt_cutouts/<id>/
+python tools/build_skins.py claude gpt gemini   # prefers the GPT cutouts when present; --no-gpt turns that off
+```
+
+GPT redraws the picture on a transparent background rather than masking it pixel by pixel, so tiny line details can differ. Delete a PNG you dislike and rerun.
+
+### Acting
+
+Body motion follows each line's expression: a surprised line hops with the hair flying, a pout shakes with an anger mark, shy sways and blushes, sad droops under gloom lines, a laugh bounces. Every line starts with a squash-and-stretch beat, and hair and skirts lag behind the body. The mouth opens continuously with the loudness of the voice, changes width per syllable, and moves the jaw. The performance intensity setting scales all of it. Like the expressions, this is staging chosen by text rules and says nothing about the AI's internal state.
 
 ### Voices
 
@@ -250,7 +273,7 @@ Review exported content before sharing an experiment. `.gitignore` does not affe
 server.mjs                  HTTP service, live updates, and moderator scheduling
 mcp.mjs                     stdio MCP entry point
 lib/agents.mjs              CLI adapters and discussion prompts
-lib/api.mjs                 HTTP seats (Nous) and the model catalog
+lib/api.mjs                 HTTP seats (Nous, DeepSeek) and the model catalog
 lib/secrets.mjs             API keys pasted in the web UI
 lib/stage.mjs / tts.mjs     Stage script and voices
 lib/store.mjs               JSON storage, memory, and version management

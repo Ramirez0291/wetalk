@@ -1,6 +1,8 @@
 // 单张立绘的"伪 Live2D"：不拆图层，在片元着色器里按区域权重扭曲取样坐标。
 // 头部绕脖子转、头发和裙摆按离身体中线的距离摆动、胸口随呼吸起伏、脸部做一点视差。
 // 张嘴是贴片，和立绘一起被扭曲，所以不会和脸错开；眨眼是把眼带压扁。
+// 口型：贴片按"开合 × 宽窄"两个量缩放（啊 / 哦 / 诶各不一样），先用嘴上下的肤色盖掉原来的闭嘴线，
+// 下巴跟着往下掉一点。夸张动作：头部放大（uBulge）、头发和裙摆的惯性（uWind / uBounce）。
 
 const VERT = `#version 300 es
 in vec2 aPos;
@@ -22,6 +24,9 @@ uniform float uTilt, uNod, uBreath, uSway;
 uniform vec2 uLook;
 uniform vec4 uMouthRect, uEyeBand;     // 中心 xy、半宽高 zw（uv）
 uniform float uMouthOpen, uBlink;
+uniform vec2 uMouthShape;  // 贴片的宽、高倍率
+uniform vec2 uMouthLine;   // 原图那张嘴的半宽、半高（uv），张嘴时要盖掉
+uniform float uJaw, uBulge, uWind, uBounce;
 uniform float uTone;       // 非发言者压暗
 uniform vec3 uFlash;       // 打光：冲击时一闪
 
@@ -39,6 +44,17 @@ vec2 warp(vec2 p) {
   q = pivot + d / scale;
   q.y += uNod * headW;
 
+  // 头部放大：惊讶、强调时脑袋"弹"一下，以下巴为支点，肩膀不动
+  vec2 chin = vec2(uHead.x, uNeckY);
+  q = mix(q, chin + (q - chin) / (1.0 + uBulge), headW);
+
+  // 下巴：嘴以下、脸轮廓以内的部分跟着张嘴往下掉，到脖子衰减为零
+  if (uJaw > 0.0 && uMouthRect.z > 0.0) {
+    float below = smoothstep(uMouthRect.y - uMouthRect.w * 0.2, uMouthRect.y + uMouthRect.w * 1.2, p.y) * smoothstep(uNeckY + 0.01, uNeckY - 0.03, p.y);
+    float fx = exp(-pow((p.x - uMouthRect.x) * uAspect / (uFaceR * 0.75), 2.0));
+    q.y -= uJaw * below * fx;
+  }
+
   // 视差：脸中央比轮廓更"靠前"，看向哪边，中央就多移一点
   float r = length((p - uHead) * scale) / uFaceR;
   q -= uLook * exp(-r * r * 0.8);
@@ -54,6 +70,9 @@ vec2 warp(vec2 p) {
   q.x += uSway * weight * sin(uTime * 1.25 + p.y * 6.0 + uSeed);
   q.x += uSway * 0.45 * weight * sin(uTime * 2.3 + p.y * 13.0 + uSeed * 2.0);
   q.y += uSway * 0.3 * weight * sin(uTime * 1.7 + p.x * 9.0 + uSeed);
+  // 惯性：身体猛地一动，发梢和裙摆晚一拍才跟上（越靠外越靠下甩得越开）
+  q.x += uWind * (weight + 0.25 * lower) * (0.6 + 0.4 * sin(p.y * 9.0 + uSeed));
+  q.y += uBounce * (weight * 1.4 + 0.2 * lower);
 
   // 眨眼：把眼带往中线压扁，眼睛连同睫毛挤成一条线，上下的脸被拉过来补位。
   // 只持续几帧，不需要贴片，也就不会和头部角度对不上
@@ -78,9 +97,20 @@ void main() {
   vec4 col = (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) ? vec4(0.0) : texture(uTex, q);
 
   if (uMouthOpen > 0.02 && uMouthRect.z > 0.0) {
-    // 只按高度压扁贴片：半开就是同一张嘴矮一点，和动画里的口パク一个做法
-    vec2 m = (q - uMouthRect.xy) / (uMouthRect.zw * vec2(1.0, mix(0.55, 1.0, uMouthOpen)));
-    if (abs(m.x) < 1.0 && abs(m.y) < 1.0) col = over(col, texture(uMouthTex, m * 0.5 + 0.5));
+    float on = smoothstep(0.04, 0.2, uMouthOpen);
+    vec2 d = q - uMouthRect.xy;
+    // 先把原来的嘴盖掉：取嘴上方和下方的肤色，按高度过渡
+    if (uMouthLine.x > 0.0) {
+      vec2 e = d / uMouthLine;
+      float cover = smoothstep(1.0, 0.55, length(e)) * on * col.a;
+      if (cover > 0.0) {
+        vec4 up = texture(uTex, vec2(q.x, uMouthRect.y - uMouthLine.y * 1.5));
+        vec4 down = texture(uTex, vec2(q.x, uMouthRect.y + uMouthLine.y * 1.5));
+        col = mix(col, mix(up, down, smoothstep(-0.6, 0.6, e.y)), cover);
+      }
+    }
+    vec2 m = d / (uMouthRect.zw * uMouthShape);
+    if (abs(m.x) < 1.0 && abs(m.y) < 1.0) col = over(col, texture(uMouthTex, m * 0.5 + 0.5) * on);
   }
 
   col.rgb *= uTone;
@@ -178,6 +208,16 @@ export class Warp {
     const b = rig.eyeBand ?? [0, 0, 0, 0];
     gl.uniform4f(u.uEyeBand, b[0], b[1], b[2], b[3]);
     gl.uniform1f(u.uMouthOpen, pose.mouth ?? 0);
+    const open = pose.mouth ?? 0;
+    // 宽窄：wide 0 = 撮起来的"哦"，1 = 咧开的"诶"；开合越小整体越小
+    const wide = pose.mouthWide ?? 0.5;
+    gl.uniform2f(u.uMouthShape, (0.62 + 0.5 * wide) * (0.75 + 0.25 * open), 0.22 + 0.9 * open * (1.08 - 0.3 * wide));
+    const ml = rig.mouthLine ?? [0, 0];
+    gl.uniform2f(u.uMouthLine, ml[0], ml[1]);
+    gl.uniform1f(u.uJaw, rig.mouthRect ? open * rig.mouthRect[3] * 0.55 * (pose.jaw ?? 1) : 0);
+    gl.uniform1f(u.uBulge, pose.bulge ?? 0);
+    gl.uniform1f(u.uWind, pose.wind ?? 0);
+    gl.uniform1f(u.uBounce, pose.bounce ?? 0);
     gl.uniform1f(u.uBlink, pose.blink ?? 0);
     gl.uniform1f(u.uTone, pose.tone ?? 1);
     const f = pose.flash ?? 0;

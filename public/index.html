@@ -42,7 +42,7 @@
       <section class="stage" id="stage" hidden>
         <div class="seats-row">
           <div class="seats" id="seats"></div>
-          <button class="btn btn-sm add-seat" id="addSeatBtn" title="加一个席位：选调用方式（CLI 或 Nous API）、模型、记忆本和角色">＋ 席位</button>
+          <button class="btn btn-sm add-seat" id="addSeatBtn" title="加一个席位：选调用方式（CLI 或 API）、模型、记忆本和角色">＋ 席位</button>
         </div>
         <div class="stage-controls">
           <select id="orderSelect" title="发言顺序：固定时按座位顺序（可拖动座位调整），随机时每轮重新洗牌">
@@ -157,6 +157,11 @@
         <select name="notebook"></select>
       </label>
       <p class="hint" id="notebookHint"></p>
+      <div class="persona-lib">
+        <select name="personaPick" title="从人格库里取一条，填进下面的角色设定"></select>
+        <button class="btn btn-sm" type="button" id="personaSave" title="把下面这段角色设定存进人格库，以后别的席位和议题也能用">存入人格库</button>
+        <button class="btn btn-sm" type="button" id="personaDrop" title="从人格库里删掉选中的这一条（已经在用它的席位不受影响）" hidden>删除</button>
+      </div>
       <label>角色设定 / 立场
         <textarea name="persona" rows="4" placeholder="例如：坚定的功能主义者，认为意识就是信息处理的某种组织方式；对“感受质”之类的说法持怀疑态度。留空表示自由发挥。"></textarea>
       </label>
@@ -169,6 +174,7 @@
     </form>
   </dialog>
 
+  <datalist id="personaLibList"></datalist>
   <dialog id="proposalDialog" class="medium">
     <form method="dialog" id="proposalForm">
       <h2>🗳 发起表决</h2>

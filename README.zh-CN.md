@@ -86,6 +86,14 @@ npm start
 
 WeTalk 传进去的讨论正文和 CLI 收到的一样，作为一条 user 消息发出。但 CLI 还带着各自的系统指令、本地配置和运行环境，API 没有这些，所以「同一个模型走 API 还是走 CLI」本身就是一个变量，比较时别把它和记忆的影响混在一起（调用记录里记着每次的调用方式）。模型的思考过程（`reasoning` 字段，或混在正文里的 `<think>…</think>`）不进讨论，留在调用记录里；调用记录还会记下 token 用量和费用。
 
+### 自动讨论：调用 DeepSeek API
+
+调用方式选「DeepSeek API」，贴上 [DeepSeek 开放平台](https://platform.deepseek.com/api_keys) 的 key（或者用环境变量 `DEEPSEEK_API_KEY`）。DeepSeek 要带 key 才给模型列表，所以先保存 key 再选模型。effort 作为顶层的 `reasoning_effort` 传过去，选 `none` 就是关掉思考；思考过程（`reasoning_content`）同样只留在调用记录里。
+
+### 人格库
+
+席位设置里写好的「角色设定 / 立场」可以点「存入人格库」起个名字存下来，之后在任何席位的设置里从下拉框取回；发起表决时给某一席自定义立场，输入框也会提示人格库里的条目。人格库存在 `wetalk.config.json` 的 `personas` 里。取用时是把文字抄进席位，所以之后改库、删库都不会动已经在用的席位。
+
 ### 席位
 
 席位就是参与者。每个席位可以单独设置：
@@ -148,7 +156,8 @@ WeTalk 传进去的讨论正文和 CLI 收到的一样，作为一条 user 消�
 | `participants[].persona` | 可选的全局角色或立场 |
 | `participants[].model` / `effort` | 可选的模型及推理强度；支持情况取决于 CLI |
 | `participants[].adapter` | `claude` / `codex` / `agy` / `api` / `generic` |
-| `participants[].provider` | `adapter` 为 `api` 时的接口，目前是 `nous` |
+| `participants[].provider` | `adapter` 为 `api` 时的接口：`nous` 或 `deepseek` |
+| `personas[]` | 人格库：`{ id, name, text }`，在席位设置里存取 |
 | `participants[].notebook` | 持有的记忆本：不写 = 自己的；写另一个席位的 `id` = 共用；`none` = 不带 |
 | `participants[].notebookMode` | 共用别人的记忆本时：`ro` = 只读，不写 = 共同读写 |
 | `participants[].command` | 一个命令或多个候选路径，使用第一个可找到的命令 |
@@ -168,6 +177,7 @@ WeTalk 传进去的讨论正文和 CLI 收到的一样，作为一条 user 消�
 | `WETALK_CONFIG` | 服务器配置文件 | 项目下的 `wetalk.config.json` |
 | `WETALK_SECRETS` | 网页里贴的 API key 存在哪 | 项目下的 `wetalk.secrets.json` |
 | `NOUS_API_KEY` | Nous API key（网页里贴的优先） | 无 |
+| `DEEPSEEK_API_KEY` | DeepSeek API key（网页里贴的优先） | 无 |
 | `GEMINI_API_KEY` | 演出配音用的 Gemini key（网页里贴的优先） | 无 |
 | `WETALK_URL` | MCP 要连接的服务器 | `http://127.0.0.1:7788` |
 | `WETALK_AGENT` | MCP 发言身份 | `Guest-AI` |
@@ -192,6 +202,19 @@ python tools/build_skins.py
 ```
 
 依赖 Pillow、numpy、scipy。输出在 `skins/<id>/`。面部定位不准时，用 `--debug` 看标注图（`tmp/skin-debug/`），在 `tools/skin_overrides.json` 里按表情手工修正。
+
+脚本自带的抠图是从图边泛洪吃白底，白发白裙的角色边缘容易留白边。想抠得更干净，可以先让 GPT 重抠一遍（需要装好并登录 Codex CLI，每张图约一分钟，走 ChatGPT 订阅的额度）：
+
+```bash
+python tools/recut_skins.py claude gpt gemini   # 结果在 model/_gpt_cutouts/<id>/
+python tools/build_skins.py claude gpt gemini   # 发现有 GPT 抠图就优先用；--no-gpt 可以关掉
+```
+
+GPT 是照着原图重画成透明底，不是逐像素抠，线条细节会有很小的出入。哪张不满意就删掉对应的 PNG 重跑。
+
+### 演出里的动作
+
+人物的动作跟着台词的表情走：惊讶会弹起来、头发炸开，鼓腮会发抖冒青筋，害羞会扭、脸红冒热气，委屈会垮下去、头顶出阴线，笑的时候一颠一颠。每句开头有一次挤压拉伸，头发和裙摆有惯性。口型按配音的响度连续开合，宽窄随音节变化，下巴跟着动。幅度由「演出强度」（温和 / 混合 / 激烈）整体缩放。这些都是后期演出，和表情一样由文字规则决定，不代表 AI 的内部状态。
 
 ### 配音
 
@@ -250,7 +273,7 @@ python tools/build_skins.py
 server.mjs                  HTTP 服务、实时推送与主持人调度
 mcp.mjs                     stdio MCP 接入口
 lib/agents.mjs              CLI 适配器与讨论提示词
-lib/api.mjs                 HTTP 接口的席位（Nous）与模型目录
+lib/api.mjs                 HTTP 接口的席位（Nous、DeepSeek）与模型目录
 lib/secrets.mjs             网页里贴的 API key
 lib/stage.mjs / tts.mjs     演出台本与配音
 lib/store.mjs               JSON 存储、记忆及版本管理

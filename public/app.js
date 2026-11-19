@@ -632,6 +632,7 @@ async function loadState() {
   state.adapters = s.adapters;
   state.notebooks = s.notebooks;
   state.secrets = s.secrets;
+  state.personas = s.personas || [];
   state.threads = s.threads;
   state.spaces = s.spaces;
   if (!localStorageGet('wetalk.selected')) state.selected = new Set(s.participants.filter((p) => p.available).map((p) => p.id));
@@ -732,12 +733,13 @@ function openProposalDialog() {
           <option value="none" ${mode === 'none' ? 'selected' : ''}>本议题不设角色</option>
           <option value="custom" ${mode === 'custom' ? 'selected' : ''}>自定义</option>
         </select>
-        <input name="persona-${p.id}" value="${esc(own ? personas[p.id] : '')}" ${mode === 'custom' ? '' : 'hidden'}
+        <input name="persona-${p.id}" list="personaLibList" value="${esc(own ? personas[p.id] : '')}" ${mode === 'custom' ? '' : 'hidden'}
           placeholder="代表的立场 / 出发点，例如：中小企业主，关心成本与用工灵活性；底线是……">
         ${mode === 'inherit' && p.persona ? `<span class="persona-inherit" title="${esc(p.persona)}">${esc(p.persona)}</span>` : ''}
       </div>`;
     })
     .join('');
+  $('#personaLibList').innerHTML = (state.personas || []).map((x) => `<option value="${esc(x.text)}" label="${esc(x.name)}"></option>`).join('');
   f.drafter.innerHTML = [
     ui('<option value="rotate">投票者轮流起草</option>'),
     ...ais.map((p) => ui`<option value="${p.id}">固定由 ${esc(p.name)} 起草</option>`),
@@ -851,6 +853,7 @@ function openSettings(id) {
   f.persona.value = p?.persona || '';
   f.apiKey.value = '';
   f.modelFilter.value = '';
+  fillPersonaPick();
   fillNotebookSelect();
   $('#seatDelete').hidden = !p;
   $('#personaDialog').showModal();
@@ -875,7 +878,7 @@ async function adapterChanged({ initial = false } = {}) {
   settings.model = same ? p.model || '' : '';
   settings.effort = same ? p.effort || '' : '';
   settings.options = null;
-  settings.key = f.adapter.value;
+  const asked = (settings.key = f.adapter.value);
   f.model.innerHTML = ui('<option>正在读取模型列表…</option>');
   f.model.disabled = true;
   f.modelCustom.hidden = true;
@@ -892,7 +895,7 @@ async function adapterChanged({ initial = false } = {}) {
   } catch (e) {
     options = { models: [], efforts: [], error: e.message };
   }
-  if (settings?.key !== f.adapter.value) return; // 等待期间又换了
+  if (settings?.key !== asked || f.adapter.value !== asked) return; // 等待期间又换了（或者关掉重开了）
   settings.options = options;
   f.modelFilter.hidden = (options.models || []).length < 30;
   fillModelSelect();
@@ -909,7 +912,7 @@ function renderKeyState() {
     : ui('还没有 API key');
   el.classList.toggle('ok', !!s?.set);
   $('#keyClear').hidden = s?.source !== 'page';
-  $('#keyHint').innerHTML = ui`这个 key 所有 Nous 席位共用，保存后立即生效。它以明文存在本机的 wetalk.secrets.json（已被 git 忽略），不会发回浏览器。申请地址：<a href="${esc(a.keyUrl || '#')}" target="_blank" rel="noopener">${esc(a.keyUrl || '')}</a>`;
+  $('#keyHint').innerHTML = ui`这个 key 所有 ${esc(a.label.replace(/ API$/, ''))} 席位共用，保存后立即生效。它以明文存在本机的 wetalk.secrets.json（已被 git 忽略），不会发回浏览器。申请地址：<a href="${esc(a.keyUrl || '#')}" target="_blank" rel="noopener">${esc(a.keyUrl || '')}</a>`;
 }
 
 async function saveKey(value) {
@@ -918,6 +921,8 @@ async function saveKey(value) {
     state.secrets = await api('PUT', `/api/secrets/${a.secret}`, { value });
     seatForm().apiKey.value = '';
     renderKeyState();
+    // 有的接口（DeepSeek）要带 key 才给模型列表，存完重读一次
+    if (value && settings && !(settings.options?.models || []).length) adapterChanged({ initial: true });
     toast(value ? ui('API key 已保存') : ui('已清除页面里保存的 key'), 'info');
   } catch (e) {
     toast(e.message);
@@ -929,6 +934,63 @@ $('#keySave').addEventListener('click', () => {
   saveKey(v);
 });
 $('#keyClear').addEventListener('click', () => saveKey(''));
+
+// ---------- 人格库：把角色设定存下来，换个席位 / 议题再取 ----------
+
+function fillPersonaPick(selectId = null) {
+  const f = seatForm();
+  const lib = state.personas || [];
+  const text = f.persona.value.trim();
+  const cur = lib.find((x) => x.id === selectId) ?? lib.find((x) => x.text.trim() === text && text);
+  f.personaPick.innerHTML = [
+    lib.length ? ui`<option value="">人格库（${lib.length} 条）：选一条填进来…</option>` : ui('<option value="">人格库还是空的：写好角色设定后点“存入人格库”</option>'),
+    ...lib.map((x) => `<option value="${esc(x.id)}" title="${esc(x.text)}">${esc(x.name)}</option>`),
+  ].join('');
+  f.personaPick.value = cur?.id ?? '';
+  $('#personaDrop').hidden = !cur;
+}
+
+seatForm().personaPick.addEventListener('change', (e) => {
+  const f = seatForm();
+  const hit = (state.personas || []).find((x) => x.id === e.target.value);
+  if (hit) {
+    const old = f.persona.value.trim();
+    const known = !old || (state.personas || []).some((x) => x.text.trim() === old);
+    if (!known && !confirm(ui`用「${hit.name}」替换现在写着的角色设定？现在这段还没存进人格库。`)) return fillPersonaPick();
+    f.persona.value = hit.text;
+  }
+  $('#personaDrop').hidden = !hit;
+});
+seatForm().persona.addEventListener('input', () => fillPersonaPick());
+
+$('#personaSave').addEventListener('click', async () => {
+  const f = seatForm();
+  const text = f.persona.value.trim();
+  if (!text) return toast(ui('先写一段角色设定'));
+  const picked = (state.personas || []).find((x) => x.id === f.personaPick.value);
+  const name = prompt(ui('给这个人格起个名字（同名的会被覆盖）'), picked?.name ?? '')?.trim();
+  if (!name) return;
+  try {
+    const r = await api('POST', '/api/personas', { name, text });
+    state.personas = r.personas;
+    fillPersonaPick(r.entry.id);
+    toast(r.replaced ? ui`已更新人格「${r.entry.name}」` : ui`已存入人格库：${r.entry.name}`, 'info');
+  } catch (err) {
+    toast(err.message);
+  }
+});
+
+$('#personaDrop').addEventListener('click', async () => {
+  const hit = (state.personas || []).find((x) => x.id === seatForm().personaPick.value);
+  if (!hit || !confirm(ui`从人格库里删掉「${hit.name}」？已经在用它的席位不受影响。`)) return;
+  try {
+    state.personas = (await api('DELETE', `/api/personas/${hit.id}`)).personas;
+    fillPersonaPick();
+    toast(ui`已从人格库删除：${hit.name}`, 'info');
+  } catch (err) {
+    toast(err.message);
+  }
+});
 
 function fillNotebookSelect() {
   const f = seatForm();
@@ -1625,6 +1687,10 @@ function connect() {
         state.participants = ev.participants;
         state.notebooks = ev.notebooks;
         if (!drag?.started) renderSeats();
+        break;
+      case 'personas':
+        state.personas = ev.personas;
+        if ($('#personaDialog').open) fillPersonaPick(seatForm().personaPick.value);
         break;
       case 'secrets':
         state.secrets = ev.secrets;
